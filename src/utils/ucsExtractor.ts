@@ -21,18 +21,23 @@ export async function extractBigipConfFromUCS(file: File): Promise<string> {
 
   // Step 3: bigip.conf 파일 찾기 (대소문자 무관, 경로 유연 매칭)
   const bigipEntry = entries.find(
-    e => e.path.replace(/\\/g, '/').toLowerCase().includes('bigip.conf')
+    (e) =>
+      e.path.replace(/\\/g, '/').toLowerCase().includes('bigip.conf'),
   )
 
   if (!bigipEntry) {
     throw new Error(
       `UCS 파일 내에서 bigip.conf를 찾을 수 없습니다.\n` +
-      `발견된 파일들: ${entries.length > 0 ? entries.slice(0, 20).map(e => e.path).join(', ') : '(파일 없음)'}`
+        `발견된 파일들: ${entries.length > 0 ? entries.slice(0, 20).map((e) => e.path).join(', ') : '(파일 없음)'}`,
     )
   }
 
   // Step 4: bigip.conf 내용 추출
-  const content = extractFileFromTarAt(tarData, bigipEntry.offset, bigipEntry.size)
+  const content = extractFileFromTarAt(
+    tarData,
+    bigipEntry.offset,
+    bigipEntry.size,
+  )
   if (content === null || content.trim().length === 0) {
     throw new Error('UCS 파일 내 bigip.conf가 비어 있습니다.')
   }
@@ -42,34 +47,16 @@ export async function extractBigipConfFromUCS(file: File): Promise<string> {
 
 /**
  * DecompressionStream API를 사용하여 gzip 데이터를 압축 해제합니다.
- * (Node.js/browser 호환)
  */
 async function decompressGzip(data: Uint8Array): Promise<Uint8Array> {
-  // 브라우저 환경: DecompressionStream 사용
-  if (typeof DecompressionStream !== 'undefined') {
-    const ds = new DecompressionStream('gzip')
-    const writer = ds.writable.getWriter()
-    void writer.write(data)
-    void writer.close()
-    const reader = ds.readable.getReader()
-    const chunks: Uint8Array[] = []
-    let totalLength = 0
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      chunks.push(value)
-      totalLength += value.length
-    }
-    const result = new Uint8Array(totalLength)
-    let offset = 0
-    for (const chunk of chunks) {
-      result.set(chunk, offset)
-      offset += chunk.length
-    }
-    return result
+  if (typeof DecompressionStream === 'undefined') {
+    throw new Error('이 브라우저는 gzip 압축 해제를 지원하지 않습니다.')
   }
-
-  throw new Error('이 브라우저는 gzip 압축 해제를 지원하지 않습니다.')
+  const ds = new DecompressionStream('gzip')
+  const blob = new Blob([data])
+  const decompressedStream = blob.stream().pipeThrough(ds)
+  const decompressed = await new Response(decompressedStream).arrayBuffer()
+  return new Uint8Array(decompressed)
 }
 
 interface TarEntry {
@@ -104,7 +91,8 @@ function listTarEntries(data: Uint8Array): TarEntry[] {
 
     // 디렉토리가 아닌 파일만 추가 (typeflag: '0' 또는 '\0' = 일반 파일, '5' = 디렉토리)
     const typeFlag = header[156]
-    if (typeFlag !== 53 && fileSize > 0) { // 53 = '5' = 디렉토리
+    if (typeFlag !== 53 && fileSize > 0) {
+      // 53 = '5' = 디렉토리
       entries.push({ path: rawName, offset: dataOffset, size: fileSize })
     }
 
@@ -120,7 +108,7 @@ function listTarEntries(data: Uint8Array): TarEntry[] {
 function extractFileFromTarAt(
   data: Uint8Array,
   dataOffset: number,
-  fileSize: number
+  fileSize: number,
 ): string | null {
   if (dataOffset + fileSize > data.length || fileSize <= 0) return null
   const fileData = data.subarray(dataOffset, dataOffset + fileSize)
