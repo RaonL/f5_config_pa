@@ -4,7 +4,7 @@ import { cn } from '../utils/cn'
 import { extractBigipConfFromUCS } from '../utils/ucsExtractor'
 
 interface FileUploadProps {
-  onFileLoad: (content: string, fileName: string) => void
+  onFileLoad: (content: string, fileName: string, ucsInfo?: { matchedFile: string; fileSize: number; allEntries: { path: string; size: number }[] }) => void
   isLoading: boolean
 }
 
@@ -39,13 +39,17 @@ export function FileUpload({ onFileLoad, isLoading }: FileUploadProps) {
     if (fileNameLower.endsWith('.ucs')) {
       setIsExtracting(true)
       try {
-        const content = await extractBigipConfFromUCS(file)
-        if (!content || content.trim().length === 0) {
+        const result = await extractBigipConfFromUCS(file)
+        if (!result.content || result.content.trim().length === 0) {
           setError('UCS 파일 내 bigip.conf가 비어 있습니다.')
           return
         }
-        // UCS 파일명을 그대로 전달 (원본 파일 식별용)
-        onFileLoad(content, file.name)
+        // UCS 파일 처리: matchedFile 정보 포함하여 전달
+        onFileLoad(result.content, file.name, {
+          matchedFile: result.matchedFile,
+          fileSize: result.fileSize,
+          allEntries: result.allEntries,
+        })
       } catch (e) {
         setError(`UCS 파일 처리 중 오류: ${e instanceof Error ? e.message : String(e)}`)
       } finally {

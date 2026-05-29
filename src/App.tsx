@@ -9,21 +9,51 @@ export default function App() {
   const [result, setResult] = useState<AnalysisResult | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [ucsDebug, setUcsDebug] = useState<{
+    matchedFile: string
+    fileSize: number
+    allEntries: { path: string; size: number }[]
+    contentPreview: string
+    contentLength: number
+    lineCount: number
+  } | null>(null)
 
-  const handleFileLoad = useCallback((content: string, fileName: string) => {
+  const handleFileLoad = useCallback((
+    content: string,
+    fileName: string,
+    ucsInfo?: { matchedFile: string; fileSize: number; allEntries: { path: string; size: number }[] },
+  ) => {
     setIsLoading(true)
     setError(null)
+    setUcsDebug(null)
     try {
-      // Parse bigip.conf
       const config = parseBigipConf(content, fileName)
       if (config.virtualServers.length === 0 && config.pools.length === 0) {
-        setError('bigip.conf에서 Virtual Server 또는 Pool을 찾을 수 없습니다. 올바른 설정 파일인지 확인해 주세요.')
+        const isUCS = fileName.toLowerCase().endsWith('.ucs')
+        if (isUCS && ucsInfo) {
+          const preview = content.substring(0, 1500)
+          const lines = content.split('\n').length
+          setUcsDebug({
+            matchedFile: ucsInfo.matchedFile,
+            fileSize: ucsInfo.fileSize,
+            allEntries: ucsInfo.allEntries,
+            contentPreview: preview,
+            contentLength: content.length,
+            lineCount: lines,
+          })
+          setError(
+            `bigip.conf에서 Virtual Server 또는 Pool을 찾을 수 없습니다.\n\n` +
+            `매칭된 파일: ${ucsInfo.matchedFile} (${formatSize(ucsInfo.fileSize)})\n` +
+            `파일 크기: ${content.length}자 (${lines}줄)\n\n` +
+            `아래 [디버그 정보] 섹션에서 추출된 내용을 확인할 수 있습니다.`
+          )
+        } else {
+          setError('bigip.conf에서 Virtual Server 또는 Pool을 찾을 수 없습니다. 올바른 설정 파일인지 확인해 주세요.')
+        }
         setIsLoading(false)
         return
       }
-      // Analyze config
       const analysis = analyzeConfig(config)
-      // Simulate a brief delay for UX
       setTimeout(() => {
         setResult(analysis)
         setIsLoading(false)
@@ -37,11 +67,11 @@ export default function App() {
   const handleReset = useCallback(() => {
     setResult(null)
     setError(null)
+    setUcsDebug(null)
   }, [])
 
   return (
     <div className="min-h-screen bg-f5-bg">
-      {/* Top Bar */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -67,7 +97,6 @@ export default function App() {
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
         {!result ? (
           <div className="flex flex-col items-center justify-center min-h-[60vh]">
@@ -90,9 +119,37 @@ export default function App() {
             <FileUpload onFileLoad={handleFileLoad} isLoading={isLoading} />
 
             {error && (
-              <div className="mt-6 max-w-2xl mx-auto w-full bg-red-50 border border-red-200 text-f5-danger px-5 py-4 rounded-xl text-sm">
-                <p className="font-medium mb-1">⚠️ 오류</p>
-                <p>{error}</p>
+              <div className="mt-6 max-w-3xl mx-auto w-full">
+                <div className="bg-red-50 border border-red-200 text-f5-danger px-5 py-4 rounded-xl text-sm">
+                  <p className="font-medium mb-1">⚠️ 오류</p>
+                  <p className="whitespace-pre-wrap">{error}</p>
+                </div>
+
+                {ucsDebug && (
+                  <div className="mt-3 bg-gray-50 border border-gray-200 rounded-xl text-sm">
+                    <details>
+                      <summary className="px-5 py-3 font-medium text-gray-700 cursor-pointer hover:bg-gray-100 rounded-xl select-none">
+                        🔍 디버그 정보 — 매칭된 파일: {ucsDebug.matchedFile} ({formatSize(ucsDebug.fileSize)})
+                      </summary>
+                      <div className="px-5 pb-4 space-y-3">
+                        <div>
+                          <p className="font-medium text-gray-600 mb-1">UCS 내부 파일 목록</p>
+                          <pre className="bg-white border rounded-lg p-3 text-xs text-gray-700 max-h-40 overflow-y-auto">
+                            {ucsDebug.allEntries.map((e) =>
+                              `${e.path.padEnd(50)} ${formatSize(e.size)}`
+                            ).join('\n')}
+                          </pre>
+                        </div>
+                        <div>
+                          <p className="font-medium text-gray-600 mb-1">
+                            추출된 내용 미리보기 (첫 1500자 / 총 {formatSize(ucsDebug.contentLength)}, {ucsDebug.lineCount}줄)
+                          </p>
+                          <pre className="bg-white border rounded-lg p-3 text-xs text-gray-700 max-h-60 overflow-y-auto font-mono leading-relaxed">{ucsDebug.contentPreview}</pre>
+                        </div>
+                      </div>
+                    </details>
+                  </div>
+                )}
               </div>
             )}
 
@@ -117,4 +174,10 @@ export default function App() {
       </main>
     </div>
   )
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
 }

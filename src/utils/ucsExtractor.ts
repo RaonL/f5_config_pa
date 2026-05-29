@@ -3,7 +3,18 @@
  * F5 UCS 파일은 gzip으로 압축된 tar 아카이브입니다.
  * (브라우저 내장 DecompressionStream API 사용, 외부 의존성 없음)
  */
-export async function extractBigipConfFromUCS(file: File): Promise<string> {
+
+export interface UcsExtractResult {
+  content: string
+  matchedFile: string
+  fileSize: number
+  allEntries: { path: string; size: number }[]
+}
+
+/**
+ * UCS 파일(tar.gz)에서 bigip.conf 내용을 추출하고 메타데이터를 반환합니다.
+ */
+export async function extractBigipConfFromUCS(file: File): Promise<UcsExtractResult> {
   const arrayBuffer = await file.arrayBuffer()
 
   // Step 1: Gzip 압축 해제 (브라우저 내장 API)
@@ -26,8 +37,6 @@ export async function extractBigipConfFromUCS(file: File): Promise<string> {
   }
 
   // Step 3: 정확한 파일명 기준으로 bigip.conf 찾기
-  // - 파일명(경로 제외)이 정확히 "bigip.conf"인 항목 중 가장 큰 파일 선택
-  // - 없으면 bigip_base.conf로 fallback
   const bigipEntry = findBestEntry(entries, 'bigip.conf')
 
   if (!bigipEntry) {
@@ -47,26 +56,21 @@ export async function extractBigipConfFromUCS(file: File): Promise<string> {
     throw new Error('UCS 파일 내 bigip.conf가 비어 있습니다.')
   }
 
-  // Step 5: 내용 검증 - LTM 설정 패턴이 있는지 확인
-  if (!content.includes('ltm') && !content.includes('virtual') && !content.includes('pool')) {
-    console.warn(
-      '[ucsExtractor] 추출된 bigip.conf에 LTM 설정 패턴이 없습니다. 내용 미리보기:',
-      content.substring(0, 500),
-    )
+  return {
+    content,
+    matchedFile: bigipEntry.path,
+    fileSize: bigipEntry.size,
+    allEntries: entries.map((e) => ({ path: e.path, size: e.size })),
   }
-
-  return content
 }
 
 /**
  * 파일 목록에서 특정 파일명과 정확히 일치하는 항목을 찾습니다.
  * 여러 개일 경우 파일 크기가 가장 큰 항목을 반환합니다.
- * 없으면 fallbackFilename으로 재시도합니다.
  */
 function findBestEntry(
   entries: TarEntry[],
   targetFilename: string,
-  fallbackFilename?: string,
 ): TarEntry | null {
   // 정확한 파일명 매칭 (경로 제외, 대소문자 무관)
   const matches = entries.filter((e) => {
@@ -78,11 +82,6 @@ function findBestEntry(
     // 여러 개면 가장 큰 파일 선택 (메인 config가 가장 큼)
     matches.sort((a, b) => b.size - a.size)
     return matches[0]
-  }
-
-  // fallback 시도
-  if (fallbackFilename) {
-    return findBestEntry(entries, fallbackFilename)
   }
 
   return null
