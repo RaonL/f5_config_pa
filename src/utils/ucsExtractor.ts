@@ -1,17 +1,15 @@
-import pako from 'pako'
-
 /**
  * UCS 파일(tar.gz)에서 bigip.conf 내용을 추출합니다.
  * F5 UCS 파일은 gzip으로 압축된 tar 아카이브입니다.
+ * (브라우저 내장 DecompressionStream API 사용, 외부 의존성 없음)
  */
 export async function extractBigipConfFromUCS(file: File): Promise<string> {
   const arrayBuffer = await file.arrayBuffer()
-  const uint8Array = new Uint8Array(arrayBuffer)
 
-  // Step 1: Gzip 압축 해제
+  // Step 1: Gzip 압축 해제 (브라우저 내장 API)
   let tarData: Uint8Array
   try {
-    tarData = pako.ungzip(uint8Array)
+    tarData = await decompressGzip(new Uint8Array(arrayBuffer))
   } catch {
     throw new Error(
       'UCS 파일의 압축을 해제할 수 없습니다. 유효한 UCS 파일인지 확인해 주세요.'
@@ -40,6 +38,38 @@ export async function extractBigipConfFromUCS(file: File): Promise<string> {
   }
 
   return content
+}
+
+/**
+ * DecompressionStream API를 사용하여 gzip 데이터를 압축 해제합니다.
+ * (Node.js/browser 호환)
+ */
+async function decompressGzip(data: Uint8Array): Promise<Uint8Array> {
+  // 브라우저 환경: DecompressionStream 사용
+  if (typeof DecompressionStream !== 'undefined') {
+    const ds = new DecompressionStream('gzip')
+    const writer = ds.writable.getWriter()
+    void writer.write(data)
+    void writer.close()
+    const reader = ds.readable.getReader()
+    const chunks: Uint8Array[] = []
+    let totalLength = 0
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      chunks.push(value)
+      totalLength += value.length
+    }
+    const result = new Uint8Array(totalLength)
+    let offset = 0
+    for (const chunk of chunks) {
+      result.set(chunk, offset)
+      offset += chunk.length
+    }
+    return result
+  }
+
+  throw new Error('이 브라우저는 gzip 압축 해제를 지원하지 않습니다.')
 }
 
 interface TarEntry {
