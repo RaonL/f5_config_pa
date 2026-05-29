@@ -82,7 +82,7 @@ export default function App() {
               </div>
               <h2 className="text-2xl font-bold text-f5-dark mb-2">F5 LTM Configuration Analyzer</h2>
               <p className="text-f5-gray max-w-md mx-auto">
-                F5 BIG-IP의 bigip.conf 또는 UCS 파일을 업로드하면<br />
+                F5 BIG-IP의 bigip.conf / UCS 파일을 업로드하면<br />
                 구성 구조를 자동으로 분석하여 시각화합니다.
               </p>
             </div>
