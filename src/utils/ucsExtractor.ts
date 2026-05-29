@@ -19,16 +19,21 @@ export async function extractBigipConfFromUCS(file: File): Promise<string> {
   // Step 2: tar 파일 목록 수집
   const entries = listTarEntries(tarData)
 
-  // Step 3: bigip.conf 파일 찾기 (대소문자 무관, 경로 유연 매칭)
-  const bigipEntry = entries.find(
-    (e) =>
-      e.path.replace(/\\/g, '/').toLowerCase().includes('bigip.conf'),
-  )
+  if (entries.length === 0) {
+    throw new Error(
+      'UCS 파일 내에 파일이 없습니다. 유효한 UCS 파일인지 확인해 주세요.'
+    )
+  }
+
+  // Step 3: 정확한 파일명 기준으로 bigip.conf 찾기
+  // - 파일명(경로 제외)이 정확히 "bigip.conf"인 항목 중 가장 큰 파일 선택
+  // - 없으면 bigip_base.conf로 fallback
+  const bigipEntry = findBestEntry(entries, 'bigip.conf')
 
   if (!bigipEntry) {
     throw new Error(
       `UCS 파일 내에서 bigip.conf를 찾을 수 없습니다.\n` +
-        `발견된 파일들: ${entries.length > 0 ? entries.slice(0, 20).map((e) => e.path).join(', ') : '(파일 없음)'}`,
+        `발견된 파일들: ${entries.slice(0, 30).map((e) => `${e.path} (${formatSize(e.size)})`).join(', ')}`,
     )
   }
 
@@ -42,7 +47,51 @@ export async function extractBigipConfFromUCS(file: File): Promise<string> {
     throw new Error('UCS 파일 내 bigip.conf가 비어 있습니다.')
   }
 
+  // Step 5: 내용 검증 - LTM 설정 패턴이 있는지 확인
+  if (!content.includes('ltm') && !content.includes('virtual') && !content.includes('pool')) {
+    console.warn(
+      '[ucsExtractor] 추출된 bigip.conf에 LTM 설정 패턴이 없습니다. 내용 미리보기:',
+      content.substring(0, 500),
+    )
+  }
+
   return content
+}
+
+/**
+ * 파일 목록에서 특정 파일명과 정확히 일치하는 항목을 찾습니다.
+ * 여러 개일 경우 파일 크기가 가장 큰 항목을 반환합니다.
+ * 없으면 fallbackFilename으로 재시도합니다.
+ */
+function findBestEntry(
+  entries: TarEntry[],
+  targetFilename: string,
+  fallbackFilename?: string,
+): TarEntry | null {
+  // 정확한 파일명 매칭 (경로 제외, 대소문자 무관)
+  const matches = entries.filter((e) => {
+    const filename = e.path.replace(/\\/g, '/').split('/').filter(Boolean).pop() || ''
+    return filename.toLowerCase() === targetFilename.toLowerCase()
+  })
+
+  if (matches.length > 0) {
+    // 여러 개면 가장 큰 파일 선택 (메인 config가 가장 큼)
+    matches.sort((a, b) => b.size - a.size)
+    return matches[0]
+  }
+
+  // fallback 시도
+  if (fallbackFilename) {
+    return findBestEntry(entries, fallbackFilename)
+  }
+
+  return null
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
 }
 
 /**
@@ -81,6 +130,10 @@ function listTarEntries(data: Uint8Array): TarEntry[] {
     const rawName = parseString(header.subarray(0, 100))
     if (!rawName) break
 
+    // POSIX ustar prefix (bytes 345-500) - 긴 경로명 지원
+    const prefix = parseString(header.subarray(345, 500))
+    const fullPath = prefix ? `${prefix}/${rawName}` : rawName
+
     const sizeStr = parseString(header.subarray(124, 136))
     const fileSize = parseInt(sizeStr, 8)
     if (isNaN(fileSize)) break
@@ -89,11 +142,11 @@ function listTarEntries(data: Uint8Array): TarEntry[] {
     const dataOffset = offset + 512
     const paddedSize = Math.ceil(fileSize / 512) * 512
 
-    // 디렉토리가 아닌 파일만 추가 (typeflag: '0' 또는 '\0' = 일반 파일, '5' = 디렉토리)
+    // 디렉토리가 아닌 파일만 추가
     const typeFlag = header[156]
     if (typeFlag !== 53 && fileSize > 0) {
       // 53 = '5' = 디렉토리
-      entries.push({ path: rawName, offset: dataOffset, size: fileSize })
+      entries.push({ path: fullPath, offset: dataOffset, size: fileSize })
     }
 
     offset = dataOffset + paddedSize
