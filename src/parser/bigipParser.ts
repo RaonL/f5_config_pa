@@ -76,7 +76,8 @@ function parseBlocks(tokens: string[], start = 0): { blocks: Block[]; end: numbe
       continue
     }
     let line = ''
-    while (i < tokens.length && tokens[i] !== '\n' && tokens[i] !== ';') {
+    while (i < tokens.length && tokens[i] !== '\n' && tokens[i] !== ';' && tokens[i] !== '{' && tokens[i] !== '}') {
+      if (line) line += ' '
       line += tokens[i]; i++
     }
     if (tokens[i] === ';') i++
